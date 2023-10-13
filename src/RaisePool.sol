@@ -4,6 +4,7 @@ pragma solidity ^0.8.21;
 import "solady/src/auth/Ownable.sol";
 
 contract RaisePool is Ownable {
+    error Inactive();
     error TargetMet();
     error TargetNotMet();
     error TransferFailed();
@@ -14,6 +15,7 @@ contract RaisePool is Ownable {
     event Reached();
     event Withdraw();
 
+    bool public active;
     uint256 public immutable target;
     uint256 public immutable deadline;
     mapping(address => uint256) public amounts;
@@ -29,9 +31,15 @@ contract RaisePool is Ownable {
         }
         target = _target;
         deadline = _deadline;
+        active = true;
     }
 
-    function raise() public payable {
+    modifier isActive() {
+        if (!active) { revert Inactive(); }
+        _;
+    }
+
+    function raise() public payable isActive {
         if (address(this).balance - msg.value >= target) { revert TargetMet(); }
         uint256 overage;
         if (address(this).balance > target) {
@@ -59,10 +67,11 @@ contract RaisePool is Ownable {
     }
 
     function withdraw() external {
-        if (address(this).balance != target) { revert TargetNotMet(); }
+        if (address(this).balance < target) { revert TargetNotMet(); }
         (bool success, ) = payable(owner()).call{ value: address(this).balance }("");
         if (!success) { revert TransferFailed(); }
         emit Withdraw();
+        active = false;
     }
 
     receive() external payable { raise(); }
