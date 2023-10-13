@@ -31,7 +31,7 @@ contract RaisePool is Ownable {
         deadline = _deadline;
     }
 
-    function raise() external payable {
+    function raise() public payable {
         if (address(this).balance - msg.value >= target) { revert TargetMet(); }
         uint256 overage;
         if (address(this).balance > target) {
@@ -64,4 +64,6 @@ contract RaisePool is Ownable {
         if (!success) { revert TransferFailed(); }
         emit Withdraw();
     }
+
+    receive() external payable { raise(); }
 }
