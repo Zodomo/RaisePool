@@ -3,16 +3,16 @@ pragma solidity ^0.8.21;
 
 import {Test, console2} from "../lib/forge-std/src/Test.sol";
 import {RaisePool} from "../src/RaisePool.sol";
-import {GOODPERSON} from "../lib/GOODPERSON/src/GOODPERSON.sol";
+import {SocialCredits} from "../lib/SocialCredits/src/SocialCredits.sol";
 
 contract RaisePoolTest is Test {
     RaisePool public pool;
-    GOODPERSON public token;
+    SocialCredits public token;
 
     receive() external payable {}
 
     function setUp() public {
-        token = new GOODPERSON("GOOD PERSON", "GOODPERSON", 1_000_000_000 ether, address(this));
+        token = new SocialCredits("Zodomo's Social Credits", "ZSC", 1_000_000_000 ether, address(this));
         pool = new RaisePool(address(this), address(token), uint40(block.timestamp + 24 hours), 10 ether, 20 ether);
         token.allocate(address(pool), 50_000_000 ether);
         vm.deal(address(this), 20 ether);
