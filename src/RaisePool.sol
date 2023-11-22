@@ -1,14 +1,30 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.21;
 
+// >>>>>>>>>>>> [ IMPORTS ] <<<<<<<<<<<<
+
 import "../lib/solady/src/auth/Ownable.sol";
+import "../lib/solady/src/utils/FixedPointMathLib.sol";
+
+// >>>>>>>>>>>> [ INTERFACES ] <<<<<<<<<<<<
+
+/// @notice Inteface to read allocation and mint on the incentive token
+interface IToken {
+    function getAllocation(address _minter) external view returns (uint256);
+    function mint(address _to, uint256 _amount) external;
+    function forfeit(address _from, uint256 _amount) external;
+}
 
 /**
  * @title RaisePool
+ * @notice This is a contract that facilitates a raise for a good cause and distributes GOODPERSON tokens to donators.
  * @author Zodomo.eth (Farcaster/Telegram/Discord/Github: @zodomo, X: @0xZodomo, Email: zodomo@proton.me)
  * @custom:github https://github.com/Zodomo/RaisePool
  */
 contract RaisePool is Ownable {
+
+    // >>>>>>>>>>>> [ ERRORS ] <<<<<<<<<<<<
+
     error Overflow();
     error Deadline();
     error Inactive();
@@ -16,41 +32,35 @@ contract RaisePool is Ownable {
     error TargetNotMet();
     error TransferFailed();
 
-    event Raise(address indexed sender, uint72 indexed amount);
-    event Refund(address indexed sender, uint72 indexed amount);
-    event Withdraw(uint72 indexed amount);
+    // >>>>>>>>>>>> [ EVENTS ] <<<<<<<<<<<<
+
+    event Raise(address indexed sender, uint96 indexed amount);
+    event Refund(address indexed sender, uint96 indexed amount);
+    event Withdraw(uint96 indexed amount);
     event HardTargetReached();
 
-    mapping(address => uint72) public amounts;
-    uint72 public softTarget;
-    uint72 public hardTarget;
-    uint72 public raiseAmount;
-    uint32 public deadline;
+    // >>>>>>>>>>>> [ STORAGE VARIABLES ] <<<<<<<<<<<<
+
+    mapping(address => uint96) public amounts;
+    mapping(address => uint256) public incentives;
+    address public incentiveToken;
+    uint96 public raiseAmount;
+    uint96 public softTarget;
+    uint96 public hardTarget;
+    uint40 public deadline;
     bool public active;
+    
 
-    constructor(
-        address _owner,
-        uint32 _deadline,
-        uint72 _softTarget,
-        uint72 _hardTarget
-    ) payable {
-        if (_deadline <= block.timestamp) revert Deadline();
-        _initializeOwner(_owner);
-        if (msg.value > 0) {
-            unchecked { amounts[msg.sender] += uint72(msg.value); }
-        }
-        softTarget = _softTarget;
-        hardTarget = _hardTarget;
-        deadline = _deadline;
-        active = true; // Only change to false upon successful withdrawal to prevent further deposits
-    }
+    // >>>>>>>>>>>> [ MODIFIERS ] <<<<<<<<<<<<
 
+    /// @dev Revert call if raise has concluded
     modifier isActive() {
         // Revert if inactive (raise paid) or hardTarget has been reached prior to raise() execution
-        if (!active || raiseAmount + msg.value >= hardTarget) revert Inactive();
+        if (!active) revert Inactive();
         _;
     }
 
+    /// @dev Revert call if deadline hasn't been reached or raise passed soft target
     modifier isRefundable() {
         // Confirm deadline has been reached
         if (block.timestamp < deadline) revert Deadline();
@@ -60,65 +70,103 @@ contract RaisePool is Ownable {
         _;
     }
 
+    /// @dev Revert call if soft target was not reached
     modifier targetReached() {
         // Ensure at least soft target has been reached before allowing withdrawal
         if (raiseAmount < softTarget) revert TargetNotMet();
         _;
     }
 
-    function raise() public payable isActive {
-        if (msg.value > type(uint72).max) revert Overflow();
-        uint72 raisedAmount = raiseAmount;
-        if (raisedAmount + msg.value > hardTarget) {
-            // Determine if raise exceeds hardTarget and refund overage
-            uint72 overage;
-            uint72 amount;
-            unchecked {
-                if (raisedAmount + msg.value > hardTarget) {
-                    overage = (raisedAmount + uint72(msg.value)) - hardTarget;
-                }
-                amount = uint72(msg.value) - overage;
-            }
-            // Log adjusted raise
-            unchecked {
-                amounts[msg.sender] += amount;
-                raiseAmount += amount;
-            }
-            (bool success, ) = payable(msg.sender).call{ value: overage }("");
-            if (!success) { revert TransferFailed(); }
-            emit Raise(msg.sender, amount);
-            // Emit event here and prevent execution of code after if block to avoid duplicate storage read
-            emit HardTargetReached();
-            return; // Prevents execution of code after if block
+    // >>>>>>>>>>>> [ CONSTRUCTOR ] <<<<<<<<<<<<
+
+    constructor(
+        address _owner,
+        address _incentiveToken,
+        uint40 _deadline,
+        uint96 _softTarget,
+        uint96 _hardTarget
+    ) payable {
+        if (_deadline <= block.timestamp) revert Deadline();
+        _initializeOwner(_owner);
+        incentiveToken = _incentiveToken;
+        if (msg.value > 0) {
+            unchecked { amounts[msg.sender] += uint96(msg.value); }
         }
-        // Log current raise
-        unchecked {
-            amounts[msg.sender] += uint72(msg.value);
-            raiseAmount += uint72(msg.value);
-        }
-        emit Raise(msg.sender, uint72(msg.value));
+        softTarget = _softTarget;
+        hardTarget = _hardTarget;
+        deadline = _deadline;
+        active = true; // Only change to false upon successful withdrawal to prevent further deposits
     }
 
+    // >>>>>>>>>>>> [ PUBLIC FUNCTIONS ] <<<<<<<<<<<<
+
+    /// @notice Process a raise payment and issue incentive token
+    /// @dev Only reverts once target has been met, last TX is allowed to overpay and will be refunded
+    function raise() public payable isActive {
+        if (msg.value > type(uint96).max) revert Overflow();
+        uint96 amount = uint96(msg.value);
+        uint96 raisedAmount = raiseAmount;
+        if (raisedAmount == hardTarget) revert TargetMet();
+        // If raise meets or exceeds hardTarget, process and close raise
+        if (raisedAmount + msg.value >= hardTarget) {
+            // Determine if raise exceeds hardTarget and calculate overage
+            uint96 overage;
+            unchecked {
+                if (raisedAmount + msg.value > hardTarget) {
+                    overage = (raisedAmount + uint96(msg.value)) - hardTarget;
+                }
+                amount = uint96(msg.value) - overage;
+            }
+            // Process overage refund, if any
+            if (overage > 0) {
+                (bool success, ) = payable(msg.sender).call{ value: overage }("");
+                if (!success) { revert TransferFailed(); }
+            }
+            emit HardTargetReached();
+        }
+        // Otherwise, process normal raise
+        unchecked {
+            amounts[msg.sender] += amount;
+            raiseAmount += amount;
+        }
+        emit Raise(msg.sender, amount);
+        // Mint incentive token
+        uint256 allocation = IToken(incentiveToken).getAllocation(address(this));
+        uint256 mint = FixedPointMathLib.fullMulDiv(amount, allocation, hardTarget);
+        unchecked { incentives[msg.sender] += mint; }
+        IToken(incentiveToken).mint(msg.sender, mint);
+    }
+
+    /// @notice Process refund if soft target isn't reached by deadline
+    /// @dev Burns GOODPERSON token allocation before returning ETH
     function refund() external isRefundable {
-        uint72 amount = uint72(amounts[msg.sender]);
+        // Cache amount to save gas
+        uint96 amount = uint96(amounts[msg.sender]);
         if (amount > 0) {
+            // Forfeit all issued GOODPERSON tokens and purge state
+            IToken(incentiveToken).forfeit(msg.sender, incentives[msg.sender]);
+            delete incentives[msg.sender];
             delete amounts[msg.sender];
             unchecked { raiseAmount -= amount; }
+            // Process refund
             (bool success, ) = payable(msg.sender).call{ value: amount }("");
             if (!success) { revert TransferFailed(); }
             emit Refund(msg.sender, amount);
         }
     }
 
+    /// @notice Process withdrawal at any point after soft target is reached and lock contract
     function withdraw() external targetReached {
-        uint72 amount = raiseAmount;
+        // Adjust state
+        uint96 amount = raiseAmount;
         unchecked { raiseAmount -= amount; }
         active = false;
+        // Process withdrawal
         (bool success, ) = payable(owner()).call{ value: amount }("");
         if (!success) { revert TransferFailed(); }
         emit Withdraw(amount);
     }
 
-    // Allow direct payments to be processed accordingly, no need to call raise() from etherscan
+    /// @notice Allow direct payments to be processed accordingly, no need to call raise() from etherscan
     receive() external payable { raise(); }
 }

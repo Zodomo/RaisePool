@@ -4,3 +4,6 @@
 [submodule "lib/solady"]
 	path = lib/solady
 	url = https://github.com/vectorized/solady
+[submodule "lib/GOODPERSON"]
+	path = lib/GOODPERSON
+	url = https://github.com/Zodomo/GOODPERSON
