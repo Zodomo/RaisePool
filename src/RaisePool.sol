@@ -122,11 +122,14 @@ contract RaisePool is Ownable {
             raiseAmount += amount;
         }
         emit Raise(msg.sender, amount);
-        // Mint incentive token
-        uint256 allocation = ISocialCredits(incentiveToken).getAllocation(address(this));
-        uint256 mint = FixedPointMathLib.fullMulDiv(amount, allocation, hardTarget);
-        unchecked { incentives[msg.sender] += mint; }
-        ISocialCredits(incentiveToken).mint(msg.sender, mint);
+        // Mint incentive token if configured
+        address token = incentiveToken;
+        if (token != address(0)) {
+            uint256 allocation = ISocialCredits(token).getAllocation(address(this));
+            uint256 mint = FixedPointMathLib.fullMulDiv(amount, allocation, hardTarget);
+            unchecked { incentives[msg.sender] += mint; }
+            ISocialCredits(token).mint(msg.sender, mint);
+        }
     }
 
     /// @notice Process refund if soft target isn't reached by deadline
@@ -135,9 +138,13 @@ contract RaisePool is Ownable {
         // Cache amount to save gas
         uint96 amount = uint96(amounts[msg.sender]);
         if (amount > 0) {
-            // Forfeit all issued SocialCredits and purge state
-            ISocialCredits(incentiveToken).forfeit(msg.sender, incentives[msg.sender]);
-            delete incentives[msg.sender];
+            // Forfeit incentive token if configured
+            address token = incentiveToken;
+            if (token != address(0)) {
+                // Forfeit all issued SocialCredits and purge state
+                ISocialCredits(incentiveToken).forfeit(msg.sender, incentives[msg.sender]);
+                delete incentives[msg.sender];
+            }
             delete amounts[msg.sender];
             unchecked { raiseAmount -= amount; }
             // Process refund
