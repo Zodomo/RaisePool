@@ -4,16 +4,8 @@ pragma solidity ^0.8.21;
 // >>>>>>>>>>>> [ IMPORTS ] <<<<<<<<<<<<
 
 import "../lib/solady/src/auth/Ownable.sol";
+import "../lib/SocialCredits/src/ISocialCredits.sol";
 import "../lib/solady/src/utils/FixedPointMathLib.sol";
-
-// >>>>>>>>>>>> [ INTERFACES ] <<<<<<<<<<<<
-
-/// @notice Inteface to read allocation and mint on the incentive token
-interface IToken {
-    function getAllocation(address _minter) external view returns (uint256);
-    function mint(address _to, uint256 _amount) external;
-    function forfeit(address _from, uint256 _amount) external;
-}
 
 /**
  * @title RaisePool
@@ -131,20 +123,20 @@ contract RaisePool is Ownable {
         }
         emit Raise(msg.sender, amount);
         // Mint incentive token
-        uint256 allocation = IToken(incentiveToken).getAllocation(address(this));
+        uint256 allocation = ISocialCredits(incentiveToken).getAllocation(address(this));
         uint256 mint = FixedPointMathLib.fullMulDiv(amount, allocation, hardTarget);
         unchecked { incentives[msg.sender] += mint; }
-        IToken(incentiveToken).mint(msg.sender, mint);
+        ISocialCredits(incentiveToken).mint(msg.sender, mint);
     }
 
     /// @notice Process refund if soft target isn't reached by deadline
-    /// @dev Burns GOODPERSON token allocation before returning ETH
+    /// @dev Burns SocialCredits allocation before returning ETH
     function refund() external isRefundable {
         // Cache amount to save gas
         uint96 amount = uint96(amounts[msg.sender]);
         if (amount > 0) {
-            // Forfeit all issued GOODPERSON tokens and purge state
-            IToken(incentiveToken).forfeit(msg.sender, incentives[msg.sender]);
+            // Forfeit all issued SocialCredits and purge state
+            ISocialCredits(incentiveToken).forfeit(msg.sender, incentives[msg.sender]);
             delete incentives[msg.sender];
             delete amounts[msg.sender];
             unchecked { raiseAmount -= amount; }
